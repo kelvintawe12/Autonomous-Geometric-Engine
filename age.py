@@ -78,6 +78,8 @@ class AGE(BaseEstimator, ClusterMixin):
         Whether to use approximate nearest neighbors for scalability.
     n_ensemble_models : int, default=3
         Number of models in ensemble (for ensemble clustering).
+    use_robust_cov : bool, default=False
+        Whether to use robust covariance estimation (can be unstable).
 
     Attributes
     ----------
@@ -98,7 +100,8 @@ class AGE(BaseEstimator, ClusterMixin):
                  base_clustering='ensemble', clustering_params=None,
                  merge_clusters=True, merge_threshold=0.5,
                  adaptive_geometry=True, ensemble_method='consensus',
-                 enhance_ood=True, approx_neighbors=True, n_ensemble_models=3):
+                 enhance_ood=True, approx_neighbors=True, n_ensemble_models=3,
+                 use_robust_cov=False):
         self.min_samples = min_samples
         self.xi = xi
         self.n_components = n_components
@@ -113,6 +116,7 @@ class AGE(BaseEstimator, ClusterMixin):
         self.enhance_ood = enhance_ood
         self.approx_neighbors = approx_neighbors
         self.n_ensemble_models = n_ensemble_models
+        self.use_robust_cov = use_robust_cov
 
     # -- internals ---------------------------------------------------------
     def _detect_cluster_geometry(self, pts):
@@ -444,8 +448,8 @@ class AGE(BaseEstimator, ClusterMixin):
                         n_components=n_comp, random_state=42)
         pts_t = fmap.fit_transform(pts)
         
-        # Add robust covariance estimation for OOD
-        if len(pts) > 10:
+        # Add robust covariance estimation for OOD (if enabled)
+        if self.use_robust_cov and len(pts) > 10:
             try:
                 robust_cov = MinCovDet().fit(pts_t)
                 cov_center = robust_cov.location_

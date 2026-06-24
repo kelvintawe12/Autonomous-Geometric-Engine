@@ -5,6 +5,10 @@ Every number printed here is measured at run time. Nothing is hardcoded.
 The point is to show AGE's behaviour faithfully, INCLUDING where it loses to
 simpler baselines. Run:  python benchmark_age.py
 """
+import warnings
+import sys
+warnings.filterwarnings('ignore')
+
 import time
 import numpy as np
 import pandas as pd
@@ -16,6 +20,11 @@ from sklearn.metrics import adjusted_rand_score, roc_auc_score
 from sklearn.datasets import load_iris, load_wine
 
 from age import AGE
+
+# Fix Windows encoding issues
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
 
 SEED = 42
 
@@ -36,13 +45,14 @@ def clustering_quality():
             "KMeans": f"{adjusted_rand_score(y, KMeans(n_clusters=k, n_init=10, random_state=SEED).fit_predict(Xs)):.3f}",
             "DBSCAN": f"{adjusted_rand_score(y, DBSCAN(eps=eps, min_samples=4).fit_predict(Xs)):.3f}",
             "OPTICS": f"{adjusted_rand_score(y, OPTICS(min_samples=5, xi=0.05).fit_predict(Xs)):.3f}",
-            "AGE": f"{adjusted_rand_score(y, AGE(min_samples=5, xi=0.05).fit_predict(Xs)):.3f}",
+            "AGE": f"{adjusted_rand_score(y, AGE(min_samples=5, xi=0.05, enhance_ood=False, base_clustering='optics', use_robust_cov=False).fit_predict(Xs)):.3f}",
         })
-    print("\n1. CLUSTERING QUALITY  (Adjusted Rand Index vs ground truth; higher better)")
+    print()
+    print("1. CLUSTERING QUALITY (Adjusted Rand Index vs ground truth; higher better)")
     print("   Unsupervised: no method receives labels. Labels score the result only.")
     print(pd.DataFrame(rows).to_string(index=False))
-    print("   NOTE: AGE == OPTICS by construction; KMeans wins. The envelope layer")
-    print("         does not improve partition quality. This is expected and reported.")
+    print("   NOTE: AGE == OPTICS by construction; KMeans wins.")
+    print("         The envelope layer does not improve partition quality.")
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +72,7 @@ def ood_detection():
     Xe = np.vstack([X_in, X_ood])
     y = np.hstack([np.zeros(len(X_in)), np.ones(len(X_ood))])  # 1 = OOD
 
-    age = AGE(min_samples=5).fit(X_tr)
+    age = AGE(min_samples=5, enhance_ood=False, base_clustering='optics', use_robust_cov=False).fit(X_tr)
     auc_age = roc_auc_score(y, age.decision_distance(Xe))
     ocs = OneClassSVM(gamma="scale", nu=0.05).fit(X_tr)
     auc_ocs = roc_auc_score(y, -ocs.decision_function(Xe))
@@ -72,7 +82,8 @@ def ood_detection():
     acc_in = np.mean(age.predict(X_in) != -1) * 100
     rej_ood = np.mean(age.predict(X_ood) == -1) * 100
 
-    print("\n2. OUT-OF-DISTRIBUTION DETECTION  (AUROC, higher better)")
+    print()
+    print("2. OUT-OF-DISTRIBUTION DETECTION (AUROC, higher better)")
     print(pd.DataFrame([
         {"Method": "kNN(5) distance (5-line baseline)", "AUROC": f"{auc_knn:.3f}"},
         {"Method": "One-Class SVM", "AUROC": f"{auc_ocs:.3f}"},
@@ -80,8 +91,7 @@ def ood_detection():
     ]).to_string(index=False))
     print(f"   AGE hard decision: accepts {acc_in:.1f}% of in-distribution, "
           f"rejects {rej_ood:.1f}% of OOD.")
-    print("   NOTE: AGE's rejection is usable but does NOT beat the simpler")
-    print("         baselines. Reported honestly.")
+    print("   NOTE: AGE rejection is usable but does NOT beat simpler baselines.")
 
 
 # ---------------------------------------------------------------------------
@@ -91,13 +101,13 @@ def predict_capability():
     rng = np.random.RandomState(SEED)
     th = rng.uniform(0, 2 * np.pi, 800); r = 5.0 + rng.normal(0, 0.08, 800)
     X_tr = np.column_stack([r * np.cos(th), r * np.sin(th)])
-    age = AGE(min_samples=5).fit(X_tr)
+    age = AGE(min_samples=5, enhance_ood=False, base_clustering='optics', use_robust_cov=False).fit(X_tr)
     th2 = rng.uniform(0, 2 * np.pi, 500); r2 = 5.0 + rng.normal(0, 0.08, 500)
     X_new = np.column_stack([r2 * np.cos(th2), r2 * np.sin(th2)])
     accepted = np.mean(age.predict(X_new) != -1) * 100
-    print("\n3. OUT-OF-SAMPLE predict()  (capability KMeans/DBSCAN/OPTICS lack natively)")
-    print(f"   Trained on a ring; {accepted:.1f}% of UNSEEN on-ring points accepted "
-          f"and assigned to a cluster.")
+    print()
+    print("3. OUT-OF-SAMPLE predict() (capability KMeans/DBSCAN/OPTICS lack natively)")
+    print(f"   Trained on a ring; {accepted:.1f}% of UNSEEN on-ring points accepted and assigned to a cluster.")
     print("   This (a deployable predict + reject on new data) is AGE's actual niche.")
 
 
@@ -109,9 +119,10 @@ def runtime_scaling():
     for N in [1000, 2500, 5000, 10000]:
         th = np.linspace(0, 2 * np.pi, N)
         X = np.column_stack([4 * np.cos(th), 4 * np.sin(th)])
-        t = time.time(); AGE(min_samples=10).fit(X); dt = time.time() - t
+        t = time.time(); AGE(min_samples=10, enhance_ood=False, base_clustering='optics', use_robust_cov=False).fit(X); dt = time.time() - t
         rows.append({"N": N, "fit time (s)": f"{dt:.3f}"})
-    print("\n4. RUNTIME SCALING  (fit, measured)")
+    print()
+    print("4. RUNTIME SCALING (fit, measured)")
     print(pd.DataFrame(rows).to_string(index=False))
     print("   NOTE: dominated by OPTICS (~O(N^1.4) empirically), not O(N log N).")
 
