@@ -31,18 +31,28 @@ Key Improvements:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 from sklearn.base import BaseEstimator, ClusterMixin
-from sklearn.cluster import OPTICS, DBSCAN, HDBSCAN, AgglomerativeClustering
-from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
-from sklearn.kernel_approximation import Nystroem, RBFSampler
+from sklearn.cluster import OPTICS, DBSCAN, KMeans
+from sklearn.mixture import GaussianMixture
+from sklearn.kernel_approximation import Nystroem
 from sklearn.neighbors import KDTree, LocalOutlierFactor
 from sklearn.model_selection import ParameterGrid
-from sklearn.metrics import silhouette_score, pairwise_distances, calinski_harabasz_score
-from scipy.spatial.distance import pdist, cdist
-from scipy.stats import mode, entropy
+from sklearn.metrics import silhouette_score, calinski_harabasz_score
+from scipy.spatial.distance import pdist
+from scipy.optimize import linear_sum_assignment
 from sklearn.covariance import MinCovDet
 from sklearn.ensemble import IsolationForest
+from sklearn.utils import check_random_state
+
+# HDBSCAN was added to scikit-learn in 1.3. requirements.txt pins >=1.0, so guard
+# the import and gate every use behind ``HDBSCAN is not None``.
+try:
+    from sklearn.cluster import HDBSCAN
+except ImportError:  # pragma: no cover - depends on installed sklearn version
+    HDBSCAN = None
 
 
 class AGE(BaseEstimator, ClusterMixin):
@@ -80,6 +90,10 @@ class AGE(BaseEstimator, ClusterMixin):
         Number of models in ensemble (for ensemble clustering).
     use_robust_cov : bool, default=False
         Whether to use robust covariance estimation (can be unstable).
+    random_state : int, RandomState instance or None, default=None
+        Controls randomness of the ensemble base clusterers, the Nystroem
+        feature maps, the consensus KMeans and the OOD models. Pass an int for
+        reproducible results across calls.
 
     Attributes
     ----------
@@ -101,7 +115,7 @@ class AGE(BaseEstimator, ClusterMixin):
                  merge_clusters=True, merge_threshold=0.5,
                  adaptive_geometry=True, ensemble_method='consensus',
                  enhance_ood=True, approx_neighbors=True, n_ensemble_models=3,
-                 use_robust_cov=False):
+                 use_robust_cov=False, random_state=None):
         self.min_samples = min_samples
         self.xi = xi
         self.n_components = n_components
@@ -117,8 +131,16 @@ class AGE(BaseEstimator, ClusterMixin):
         self.approx_neighbors = approx_neighbors
         self.n_ensemble_models = n_ensemble_models
         self.use_robust_cov = use_robust_cov
+        self.random_state = random_state
 
     # -- internals ---------------------------------------------------------
+    def _next_seed(self):
+        """Draw a deterministic integer seed from the fitted RNG.
+
+        ``self._rng`` is created in ``fit``; sub-estimators are seeded from it so
+        the whole pipeline is reproducible when ``random_state`` is fixed.
+        """
+        return int(self._rng.randint(0, 2 ** 31 - 1))
     def _detect_cluster_geometry(self, pts):
         """Enhanced geometric type detection with manifold learning."""
         if len(pts) < 3:
@@ -252,10 +274,12 @@ class AGE(BaseEstimator, ClusterMixin):
         final_labels = np.zeros(n_samples, dtype=int)
         
         for i in range(n_samples):
-            votes = [labels[i] for labels in ensemble_labels]
-            # Use mode for majority vote
-            final_labels[i] = mode(votes)[0][0]
-        
+            votes = [int(labels[i]) for labels in ensemble_labels]
+            # Use mode for majority vote (scipy.stats.mode API is version-dependent)
+            res = mode(votes, keepdims=True)
+            m = np.asarray(res.mode).reshape(-1)
+            final_labels[i] = int(m[0]) if m.size > 0 else 0
+
         return final_labels
     
     def _weighted_clustering(self, ensemble_labels, weights):

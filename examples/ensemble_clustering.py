@@ -5,9 +5,18 @@ This example demonstrates the ensemble clustering capabilities of AGE,
 which combine multiple clustering algorithms for improved robustness.
 """
 
+import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
+
+# Ensure project root is on sys.path so `from age import AGE` works
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from age import AGE
+
 from sklearn.datasets import make_blobs, make_moons
 from sklearn.preprocessing import StandardScaler
 
